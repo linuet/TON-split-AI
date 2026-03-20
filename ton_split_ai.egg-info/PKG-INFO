@@ -1,0 +1,84 @@
+Metadata-Version: 2.4
+Name: ton-split-ai
+Version: 0.1.0
+Summary: Telegram-native AI receipt splitting bot with TON payment links
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: aiogram>=3.20.0
+Requires-Dist: fastapi>=0.115.0
+Requires-Dist: uvicorn[standard]>=0.30.0
+Requires-Dist: sqlalchemy>=2.0.35
+Requires-Dist: aiosqlite>=0.20.0
+Requires-Dist: pydantic>=2.8.2
+Requires-Dist: pydantic-settings>=2.4.0
+Requires-Dist: openai>=1.68.0
+Requires-Dist: pillow>=10.4.0
+Requires-Dist: opencv-python-headless>=4.10.0.84
+Requires-Dist: python-multipart>=0.0.9
+Requires-Dist: orjson>=3.10.7
+Requires-Dist: loguru>=0.7.2
+Requires-Dist: python-dotenv>=1.0.1
+Requires-Dist: qrcode[pil]>=7.4.2
+Requires-Dist: httpx>=0.27.0
+
+# TON Split AI
+
+Telegram bot on Python for:
+- receipt photo parsing with OpenAI Vision
+- natural-language bill splitting
+- TON payment link generation
+
+## Why this version is simple
+Only 4 environment variables are needed in normal use:
+- `TELEGRAM_BOT_TOKEN`
+- `OPENAI_API_KEY`
+- `DATABASE_URL` (optional)
+- `TON_RECEIVER_ADDRESS` (optional)
+
+## Quick start
+```bash
+python -m venv .venv
+source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
+pip install -e .
+cp .env.example .env
+python -m app.main
+```
+
+The bot runs with long polling. A tiny FastAPI server is also started on `http://127.0.0.1:8080` for health checks.
+
+## Telegram flow
+1. Send `/start`
+2. Send a receipt photo
+3. Bot parses and verifies the receipt
+4. Send participants, for example: `me, Sasha, Dima`
+5. Assign items in plain language, for example:
+   - `coffee me`
+   - `pasta Sasha`
+   - `water split between me and Dima`
+   - `service charge all`
+   - `done`
+6. Bot shows each share and generates TON payment links
+
+## Accuracy strategy
+This project favors correctness over cost:
+- image preprocessing with OpenCV + Pillow
+- first OpenAI parse pass
+- second OpenAI verification pass
+- server-side arithmetic validation
+- manual correction commands when needed
+
+## Minimal TON integration
+MVP uses TON transfer deep links:
+- `ton://transfer/<address>?amount=<nanotons>&text=<comment>`
+
+That keeps the project simple while still showing a real TON-native settlement flow.
+
+## Main commands
+- `/start`
+- `/new`
+- `/help`
+- `/cancel`
+
+## Notes
+- The bot stores receipts and split sessions in SQLite by default.
+- OpenAI is used for receipt extraction and intent parsing, but all final math is done in Python.
