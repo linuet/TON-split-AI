@@ -10,9 +10,8 @@ Simple Telegram bot that:
 
 ```bash
 python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e .
-copy .env.example .env
+pip install -e .
+cp .env.example .env
 python -m app.main
 ```
 
