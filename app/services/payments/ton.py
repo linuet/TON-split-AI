@@ -6,11 +6,11 @@ from app.core.config import get_settings
 
 class TonPaymentService:
     """
-    Simple TON MVP integration via transfer deep links.
-    For hackathon demos this is enough to show a real payment handoff.
+    TON MVP integration via a web URL that opens in the browser,
+    instead of ton:// deep links.
     """
 
-    APPROX_TON_RATE = Decimal("300")  # 1 TON ~= 300 fiat units for demo-only conversion.
+    APPROX_TON_RATE = Decimal("300")  # demo-only conversion.
 
     def __init__(self) -> None:
         self.receiver = get_settings().ton_receiver_address
@@ -24,4 +24,4 @@ class TonPaymentService:
 
     def create_transfer_link(self, ton_amount: Decimal, comment: str) -> str:
         nanotons = self.to_nanotons(ton_amount)
-        return f"ton://transfer/{self.receiver}?amount={nanotons}&text={quote(comment)}"
+        return f"https://app.tonkeeper.com/transfer/{self.receiver}?amount={nanotons}&text={quote(comment)}"

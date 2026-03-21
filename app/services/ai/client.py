@@ -9,12 +9,13 @@ from openai import AsyncOpenAI
 
 from app.core.config import get_settings
 from app.services.ai.prompts import (
+    PARTICIPANTS_PARSE_SYSTEM,
     RECEIPT_PARSE_SYSTEM,
     RECEIPT_VERIFY_SYSTEM,
     SPLIT_INTENT_SYSTEM,
 )
 from app.services.receipt.schemas import ReceiptParseResult, ReceiptVerificationResult
-from app.services.split.schemas import ParsedIntent
+from app.services.split.schemas import ParsedIntent, ParsedParticipants
 
 
 class OpenAIService:
@@ -40,24 +41,17 @@ class OpenAIService:
     def _ensure_nullable(self, schema: dict[str, Any]) -> dict[str, Any]:
         if "anyOf" in schema:
             variants = schema["anyOf"]
-            has_null = any(
-                isinstance(v, dict) and v.get("type") == "null"
-                for v in variants
-            )
-            if has_null:
+            if any(isinstance(v, dict) and v.get("type") == "null" for v in variants):
                 return schema
             return {"anyOf": [*variants, {"type": "null"}]}
-
         if isinstance(schema.get("type"), list):
             types = list(schema["type"])
             if "null" not in types:
                 types.append("null")
             schema["type"] = types
             return schema
-
         if schema.get("type") == "null":
             return schema
-
         return {"anyOf": [schema, {"type": "null"}]}
 
     def _sanitize_schema_node(
@@ -75,7 +69,6 @@ class OpenAIService:
             )
 
         sanitized: dict[str, Any] = {}
-
         if "anyOf" in node:
             sanitized["anyOf"] = [
                 self._sanitize_schema_node(v, root_schema, originally_required=True)
@@ -83,12 +76,10 @@ class OpenAIService:
                 else v
                 for v in node["anyOf"]
             ]
-
         elif node.get("type") == "object" or "properties" in node:
             properties = node.get("properties", {})
             original_required = set(node.get("required", []))
             sanitized_properties: dict[str, Any] = {}
-
             for key, value in properties.items():
                 child = self._sanitize_schema_node(
                     value,
@@ -98,12 +89,10 @@ class OpenAIService:
                 if key not in original_required:
                     child = self._ensure_nullable(child)
                 sanitized_properties[key] = child
-
             sanitized["type"] = "object"
             sanitized["properties"] = sanitized_properties
             sanitized["required"] = list(sanitized_properties.keys())
             sanitized["additionalProperties"] = False
-
         elif node.get("type") == "array":
             sanitized["type"] = "array"
             items = node.get("items", {})
@@ -112,7 +101,6 @@ class OpenAIService:
                 if isinstance(items, dict)
                 else items
             )
-
         else:
             for key in (
                 "type",
@@ -128,13 +116,10 @@ class OpenAIService:
             ):
                 if key in node:
                     sanitized[key] = node[key]
-
         if "description" in node:
             sanitized["description"] = node["description"]
-
         if not originally_required:
             sanitized = self._ensure_nullable(sanitized)
-
         return sanitized
 
     def _schema_for_openai(self, model: Any, name: str) -> dict[str, Any]:
@@ -188,50 +173,28 @@ class OpenAIService:
     def _normalize_number_like(value: Any, default: Any = 0) -> Any:
         if value is None or value == "":
             return default
-
         if isinstance(value, (int, float, Decimal)):
             return value
-
         if not isinstance(value, str):
             return value
-
         s = value.strip()
         if not s:
             return default
-
         s = s.replace(" ", "").replace("\u00a0", "")
         s = re.sub(r"[^\d,.\-]", "", s)
-
         if not s:
             return default
-
         if "," in s and "." in s:
             if s.rfind(",") > s.rfind("."):
-                # 1.234,56 -> 1234.56
-                s = s.replace(".", "")
-                s = s.replace(",", ".")
+                s = s.replace(".", "").replace(",", ".")
             else:
-                # 1,234.56 -> 1234.56
                 s = s.replace(",", "")
-
         elif "," in s:
             parts = s.split(",")
-            if len(parts[-1]) in (1, 2):
-                # 299,00 -> 299.00
-                s = "".join(parts[:-1]) + "." + parts[-1]
-            else:
-                # 43,959 -> 43959
-                s = "".join(parts)
-
+            s = "".join(parts[:-1]) + "." + parts[-1] if len(parts[-1]) in (1, 2) else "".join(parts)
         elif "." in s:
             parts = s.split(".")
-            if len(parts[-1]) in (1, 2):
-                # 299.00 -> 299.00
-                s = "".join(parts[:-1]) + "." + parts[-1]
-            else:
-                # 43.959 -> 43959
-                s = "".join(parts)
-
+            s = "".join(parts[:-1]) + "." + parts[-1] if len(parts[-1]) in (1, 2) else "".join(parts)
         try:
             return str(Decimal(s))
         except (InvalidOperation, ValueError):
@@ -240,7 +203,6 @@ class OpenAIService:
     def _normalize_receipt_item(self, item: Any) -> dict[str, Any] | None:
         if item is None or not isinstance(item, dict):
             return None
-
         return {
             "raw_text": item.get("raw_text"),
             "normalized_name": item.get("normalized_name") or "Unknown item",
@@ -254,108 +216,81 @@ class OpenAIService:
     def _normalize_receipt_data(self, data: Any) -> dict[str, Any]:
         if data is None or not isinstance(data, dict):
             data = {}
-
         items_raw = self._normalize_list(data.get("items"))
-        items_normalized: list[dict[str, Any]] = []
-
+        items_normalized = []
         for item in items_raw:
             normalized_item = self._normalize_receipt_item(item)
             if normalized_item is not None:
                 items_normalized.append(normalized_item)
-
         return {
             "merchant_name": data.get("merchant_name"),
             "receipt_date": data.get("receipt_date"),
             "receipt_time": data.get("receipt_time"),
-            "currency": data.get("currency") or "RUB",
+            "currency": data.get("currency") or "USD",
             "subtotal": self._normalize_number_like(data.get("subtotal"), None),
             "tax_amount": self._normalize_number_like(data.get("tax_amount"), None),
             "service_charge": self._normalize_number_like(data.get("service_charge"), None),
             "tips": self._normalize_number_like(data.get("tips"), None),
             "total": self._normalize_number_like(data.get("total"), None),
             "items": items_normalized,
-            "uncertain_fields": [
-                str(x) for x in self._normalize_list(data.get("uncertain_fields"))
-                if x is not None
-            ],
-            "parsing_notes": [
-                str(x) for x in self._normalize_list(data.get("parsing_notes"))
-                if x is not None
-            ],
+            "uncertain_fields": [str(x) for x in self._normalize_list(data.get("uncertain_fields")) if x is not None],
+            "parsing_notes": [str(x) for x in self._normalize_list(data.get("parsing_notes")) if x is not None],
             "confidence_score": self._normalize_number_like(data.get("confidence_score"), 0.0),
         }
 
     def _normalize_verification_data(self, data: Any) -> dict[str, Any]:
         if data is None or not isinstance(data, dict):
             data = {}
-
-        corrected = self._normalize_receipt_data(data.get("corrected_receipt"))
-
         return {
-            "corrected_receipt": corrected,
-            "verification_notes": [
-                str(x)
-                for x in self._normalize_list(data.get("verification_notes"))
-                if x is not None
-            ],
-            "needs_manual_review": self._normalize_bool(
-                data.get("needs_manual_review"),
-                False,
-            ),
+            "corrected_receipt": self._normalize_receipt_data(data.get("corrected_receipt")),
+            "verification_notes": [str(x) for x in self._normalize_list(data.get("verification_notes")) if x is not None],
+            "needs_manual_review": self._normalize_bool(data.get("needs_manual_review"), False),
         }
 
     def _normalize_action(self, action: Any) -> dict[str, Any] | None:
         if action is None or not isinstance(action, dict):
             return None
-
-        action_type = action.get("type") or "done"
-        item_match = action.get("item_match")
-        extra_kind = action.get("extra_kind")
-
-        participants = [
-            str(x)
-            for x in self._normalize_list(action.get("participants"))
-            if x is not None
-        ]
-        ratios = [
-            self._normalize_number_like(x, 0)
-            for x in self._normalize_list(action.get("ratios"))
-            if x is not None
-        ]
-
         return {
-            "type": action_type,
-            "item_match": item_match,
-            "participants": participants,
-            "ratios": ratios,
-            "extra_kind": extra_kind,
+            "type": action.get("type") or "done",
+            "item_match": action.get("item_match"),
+            "category": action.get("category"),
+            "participants": [str(x) for x in self._normalize_list(action.get("participants")) if x is not None],
+            "ratios": [self._normalize_number_like(x, 0) for x in self._normalize_list(action.get("ratios")) if x is not None],
+            "extra_kind": action.get("extra_kind"),
         }
 
     def _normalize_split_intent_data(self, data: Any) -> dict[str, Any]:
         if data is None or not isinstance(data, dict):
             data = {}
-
-        actions_raw = self._normalize_list(data.get("actions"))
-        actions_normalized: list[dict[str, Any]] = []
-
-        for action in actions_raw:
+        actions_normalized = []
+        for action in self._normalize_list(data.get("actions")):
             normalized_action = self._normalize_action(action)
             if normalized_action is not None:
                 actions_normalized.append(normalized_action)
+        cq = data.get("clarification_question")
+        return {
+            "actions": actions_normalized,
+            "clarification_question": str(cq) if cq else None,
+            "needs_clarification": self._normalize_bool(data.get("needs_clarification"), False),
+        }
 
-        return {"actions": actions_normalized}
+    def _normalize_participants_data(self, data: Any) -> dict[str, Any]:
+        if data is None or not isinstance(data, dict):
+            data = {}
+        raw = self._normalize_list(data.get("participants"))
+        cleaned = []
+        for item in raw:
+            if item is None:
+                continue
+            val = str(item).strip()
+            if val:
+                cleaned.append(val)
+        return {"participants": cleaned}
 
-    async def parse_receipt(
-        self,
-        original_image: Path,
-        processed_image: Path,
-    ) -> ReceiptParseResult:
+    async def parse_receipt(self, original_image: Path, processed_image: Path) -> ReceiptParseResult:
         schema = self._schema_for_openai(ReceiptParseResult, "receipt_parse_result")
         payload = [
-            {
-                "role": "system",
-                "content": [{"type": "input_text", "text": RECEIPT_PARSE_SYSTEM}],
-            },
+            {"role": "system", "content": [{"type": "input_text", "text": RECEIPT_PARSE_SYSTEM}]},
             {
                 "role": "user",
                 "content": [
@@ -366,33 +301,18 @@ class OpenAIService:
             },
         ]
         data = await self._json_response(input_payload=payload, schema=schema)
-        data = self._normalize_receipt_data(data)
-        return ReceiptParseResult.model_validate(data)
+        return ReceiptParseResult.model_validate(self._normalize_receipt_data(data))
 
-    async def verify_receipt(
-        self,
-        original_image: Path,
-        processed_image: Path,
-        parsed: ReceiptParseResult,
-    ) -> ReceiptVerificationResult:
-        schema = self._schema_for_openai(
-            ReceiptVerificationResult,
-            "receipt_verification_result",
-        )
+    async def verify_receipt(self, original_image: Path, processed_image: Path, parsed: ReceiptParseResult) -> ReceiptVerificationResult:
+        schema = self._schema_for_openai(ReceiptVerificationResult, "receipt_verification_result")
         payload = [
-            {
-                "role": "system",
-                "content": [{"type": "input_text", "text": RECEIPT_VERIFY_SYSTEM}],
-            },
+            {"role": "system", "content": [{"type": "input_text", "text": RECEIPT_VERIFY_SYSTEM}]},
             {
                 "role": "user",
                 "content": [
                     {
                         "type": "input_text",
-                        "text": (
-                            "Verify and correct this parsed receipt JSON against the images:\n"
-                            f"{parsed.model_dump_json(indent=2)}"
-                        ),
+                        "text": "Verify and correct this parsed receipt JSON against the images:\n" + parsed.model_dump_json(indent=2),
                     },
                     {"type": "input_image", "image_url": self._image_data_url(original_image)},
                     {"type": "input_image", "image_url": self._image_data_url(processed_image)},
@@ -400,21 +320,27 @@ class OpenAIService:
             },
         ]
         data = await self._json_response(input_payload=payload, schema=schema)
-        data = self._normalize_verification_data(data)
-        return ReceiptVerificationResult.model_validate(data)
+        return ReceiptVerificationResult.model_validate(self._normalize_verification_data(data))
+
+    async def parse_participants(self, text: str) -> ParsedParticipants:
+        schema = self._schema_for_openai(ParsedParticipants, "parsed_participants")
+        payload = [
+            {"role": "system", "content": [{"type": "input_text", "text": PARTICIPANTS_PARSE_SYSTEM}]},
+            {"role": "user", "content": [{"type": "input_text", "text": text}]},
+        ]
+        data = await self._json_response(input_payload=payload, schema=schema)
+        return ParsedParticipants.model_validate(self._normalize_participants_data(data))
 
     async def parse_split_intent(
         self,
         command: str,
         available_items: list[str],
         participants: list[str],
+        current_assignments: dict[str, list[str]] | None = None,
     ) -> ParsedIntent:
         schema = self._schema_for_openai(ParsedIntent, "parsed_split_intent")
         payload = [
-            {
-                "role": "system",
-                "content": [{"type": "input_text", "text": SPLIT_INTENT_SYSTEM}],
-            },
+            {"role": "system", "content": [{"type": "input_text", "text": SPLIT_INTENT_SYSTEM}]},
             {
                 "role": "user",
                 "content": [
@@ -423,6 +349,7 @@ class OpenAIService:
                         "text": (
                             f"Participants: {participants}\n"
                             f"Items: {available_items}\n"
+                            f"Current assignments: {current_assignments or {}}\n"
                             f"User command: {command}"
                         ),
                     }
@@ -430,5 +357,4 @@ class OpenAIService:
             },
         ]
         data = await self._json_response(input_payload=payload, schema=schema)
-        data = self._normalize_split_intent_data(data)
-        return ParsedIntent.model_validate(data)
+        return ParsedIntent.model_validate(self._normalize_split_intent_data(data))

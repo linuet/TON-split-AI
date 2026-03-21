@@ -21,7 +21,7 @@ class ReceiptParseResult(BaseModel):
     merchant_name: str | None = None
     receipt_date: str | None = None
     receipt_time: str | None = None
-    currency: str = "RUB"
+    currency: str = "USD"
     subtotal: Decimal | None = None
     tax_amount: Decimal | None = None
     service_charge: Decimal | None = None

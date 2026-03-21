@@ -18,7 +18,7 @@ class Receipt(Base):
     merchant_name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     receipt_date: Mapped[str | None] = mapped_column(String(30), nullable=True)
     receipt_time: Mapped[str | None] = mapped_column(String(30), nullable=True)
-    currency: Mapped[str] = mapped_column(String(10), default="RUB")
+    currency: Mapped[str] = mapped_column(String(10), default="USD")
     subtotal: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     tax_amount: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)
     service_charge: Mapped[Decimal | None] = mapped_column(Numeric(12, 2), nullable=True)

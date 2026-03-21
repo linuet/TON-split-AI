@@ -6,7 +6,7 @@ from app.services.receipt.validator import validate_receipt_math
 
 def test_validate_receipt_math_ok():
     parsed = ReceiptParseResult(
-        currency="RUB",
+        currency="USD",
         subtotal=Decimal("300"),
         total=Decimal("330"),
         tax_amount=Decimal("30"),
